@@ -13,6 +13,8 @@ services:
     build: .
     volumes:
       - ./app:/app
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
     ports:
       - "${APP_PORT:-8000}:8000"
     depends_on:
