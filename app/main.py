@@ -10,8 +10,8 @@ import redis
 import datetime
 import time
 
-ONE_DAY_IN_SECONDS = 24 * 60 * 60
-ONE_WEEK_IN_SECONDS = 7 * ONE_DAY_IN_SECONDS
+ONE_DAY_IN_SECONDS = 86400
+ONE_WEEK_IN_SECONDS = 604800
 SITE_ID = "bkb"
 
 app = FastAPI()
@@ -19,7 +19,6 @@ app = FastAPI()
 # 连接 Redis 数据库
 redis_client = redis.StrictRedis(host='redis', port=6379, db=0)
 
-# 获取当前日期字符串，格式为 "YYYY-MM-DD"
 
 
 def get_current_date_str():
@@ -159,7 +158,10 @@ async def debug_count_article_views(article_id: int = Query(..., description="�
 # 测试
 @app.get("/")
 def read_root():
-    return {"Hello": "ArtiView"}
+    # 获取当前时间
+    
+    current_time = datetime.datetime.now()
+    return {"app": "ArtiView", "visit_at": current_time.strftime("%Y-%m-%d %H:%M:%S")}
 
 
 if __name__ == "__main__":
