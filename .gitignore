@@ -1,4 +1,5 @@
 .env
+config.json
 redis-data/
 __pycache__
 *.pyc

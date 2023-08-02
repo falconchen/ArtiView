@@ -1,0 +1,11 @@
+{
+  "allowed_site_ids": ["bka", "bkb", "inner"],
+  "allowed_origins": [
+    "http://example1.com",
+    "https://example2.com",
+    "http://localhost:3000"
+  ],
+  "allow_credentials": true,
+  "allow_methods": ["*"],
+  "allow_headers": ["*"]
+}
