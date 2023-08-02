@@ -45,8 +45,9 @@ app.add_middleware(
 allowed_site_ids = set(config.get("allowed_site_ids", []))
 # 自定义依赖项函数，用于验证 site_id 是否在允许的范围内
 def get_site_id(site_id: str):
+    
     if site_id not in allowed_site_ids:
-        raise ValueError("Invalid site_id")
+        raise HTTPException(status_code=400, detail="无效的site_id")        
     return site_id
 
 
