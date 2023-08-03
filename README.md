@@ -2,7 +2,22 @@
 
 简单实用的使用redis统计文章访问量的 `fastapi` 应用 
 
-nginx反代配置
+1. 复制 app下的 config.sample.json 为 config.json
+
+2. 项目目录下新建 `.env` 文件，修改内容
+
+```
+APP_PORT=9800
+REDIS_PORT=6380
+TZ=Asia/Hong_Kong
+```
+
+3. 启动容器
+ `docker compose up -d`
+
+
+如需 nginx反代配置：
+
 ``` 
 location /arti-view/{
     
