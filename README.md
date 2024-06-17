@@ -32,3 +32,9 @@ location /arti-view/{
 
 }
 ```
+
+###   get rank in redis
+
+```
+ZREVRANGE "hilocal:article:rank:7days" 0 9 True
+```
