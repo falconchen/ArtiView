@@ -4,11 +4,13 @@
 
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, Depends
+
+from fastapi import FastAPI, BackgroundTasks, Query, Path, Depends, HTTPException
+
 import hashlib
 import redis
-import datetime
-from datetime import date
+#import datetime 
+from datetime import datetime,date,timedelta
 import time
 import json
 from fastapi.middleware.cors import CORSMiddleware
@@ -42,59 +44,72 @@ app.add_middleware(
 )
 
 # 获取配置文件中的 allowed_site_ids
-allowed_site_ids = set(config.get("allowed_site_ids", []))
+allowed_site_ids = config.get("allowed_site_ids", {})
+
 # 自定义依赖项函数，用于验证 site_id 是否在允许的范围内
-def get_site_id(site_id: str):
+def get_site_id(site_id: str = Path(..., description="网站ID")):
     
-    if site_id not in allowed_site_ids:
-        raise HTTPException(status_code=400, detail="无效的site_id")        
+    
+    secret = allowed_site_ids.get(site_id)
+    if not secret: 
+        raise HTTPException(status_code=400, detail="无效的site_id")
     return site_id
 
 
 def get_current_date_str():
-    current_date = datetime.date.today()
-    return current_date.isoformat()
+    # current_date = datetime.date.today()
+    # return current_date.isoformat()
+    return datetime.now().strftime('%Y%m%d')
 
 # 文章访问计数器
-def increment_article_view_count(site_id: str, article_id: int):
-    redis_client.incr(f'{site_id}:article:{article_id}')
+def increment_article_view_count(site_id: str, article_id: str):
+    
+    today = get_current_date_str()
+    redis_client.incr(f'{site_id}:article:{article_id}:{today}')
+    redis_client.incr(f'{site_id}:article:{article_id}:total')
 
 
 # 网站每日访问计数器
 def increment_site_daily_view_count(site_id):
     # 获取当前日期字符串
     current_date_str = get_current_date_str()
-    # 拼接每日键名，格式为 "SITE_ID:YYYY-MM-DD"
+    # 拼接每日键名，格式为 "SITE_ID:YYYYMMDD"
     daily_key = f"{site_id}:site:{current_date_str}"
     # 使用 INCR 命令实现自增计数
     redis_client.incr(daily_key)
 
 
 # 获取文章访问数
-def get_article_view_count(site_id:str, article_id:int):
-    view_count = redis_client.get(f'{site_id}:article:{article_id}')
+def get_article_view_count(site_id:str, article_id:str):
+    view_count = redis_client.get(f'{site_id}:article:{article_id}:total')
     return int(view_count) if view_count else 0
 
 # 获取文章指定日期访问数
 def get_site_daily_view_count(site_id:str, date_str:str):
+    #移除 date_str如2023-08-04的`-`
+    date_str = date_str.replace('-','')
     view_count = redis_client.get(f'{site_id}:site:{date_str}')
     return int(view_count) if view_count else 0
 
 
 # 生成校验键
-def generate_validation_key(site_id: str, article_id: int, other: int = 0):
-    key_string = site_id + str(article_id) + str(other)
+def generate_validation_key(site_id: str, article_id: str, other: int = 0):
+    secret = allowed_site_ids.get(site_id)
+    key_string = f"{site_id}{secret}{article_id}{other}"
     return hashlib.sha1(key_string.encode('utf-8')).hexdigest()
 
 # 统计文章访问数，接收GET请求
+
 @app.get("/site/{site_id}/count_article_views/")
 async def count_article_views(
+    background_tasks: BackgroundTasks,
     site_id: str = Depends(get_site_id),
-    article_id: int = Query(..., description="文章ID"),
+    article_id: str = Query(..., description="文章ID"),
     publish_timestamp: Optional[int] = Query(
         default=None, description="文章发布时间戳"),
     validation_key: str = Query(...,
-                                description="校验键")
+                                description="校验键"),
+    
 ):
     # 接下来，检查 publish_timestamp 是否为空
     if publish_timestamp is None:
@@ -112,14 +127,18 @@ async def count_article_views(
 
     # 增加文章访问数量
     increment_article_view_count(site_id, article_id)
-    # 增加网站每日访问计数器
-    increment_site_daily_view_count(site_id)
-    # 添加文章到热门列表
-    # 获取当前时间戳
+    
+    # 增加网站每日访问计数器    
+    background_tasks.add_task(increment_site_daily_view_count, site_id)
+
+    # 添加文章到热门列表(仅发布时间一周内)
     current_timestamp = int(time.time())
     expiration_time = publish_timestamp + ONE_WEEK_IN_SECONDS
     if expiration_time > current_timestamp:
-        add_article_to_weekly_hot(site_id, article_id, expiration_time)
+        background_tasks.add_task(add_article_to_weekly_hot, site_id, article_id, expiration_time)        
+    
+    #后台执行任务
+    background_tasks.add_task(update_all_ranks, site_id, article_id)
     return {"message": "文章访问数已统计"}
 
 
@@ -136,6 +155,21 @@ def add_article_to_weekly_hot(site_id, article_id, expiration_time):
     # 设置文章的过期时间
     return redis_client.expireat(weekly_hot_key, expiration_time)
 
+# 更新排行榜
+def update_rank(site_id: str, article_id: str, rank_key: str, days: int):
+    today = datetime.now()
+    scores = 0
+    for i in range(days):
+        day = (today - timedelta(days=i)).strftime('%Y%m%d')
+        key = f'{site_id}:article:{article_id}:{day}'
+        score = int(redis_client.get(key) or 0)
+        scores += score
+    redis_client.zadd(rank_key, {f'{site_id}:{article_id}': scores})
+
+def update_all_ranks(site_id: str, article_id: str):
+    update_rank(site_id, article_id, f'{site_id}:article:rank:7days', 7)
+    update_rank(site_id, article_id, f'{site_id}:article:rank:daily', 1)
+    update_rank(site_id, article_id, f'{site_id}:article:rank:monthly', 30)
 
 # 获取前多少条数据的 weekly_hot 文章访问量和 ID
 @app.get("/site/{site_id}/weekly_hot_articles/")
@@ -148,7 +182,8 @@ async def weekly_hot_articles(
     weekly_hot_members = redis_client.keys(weekly_hot_keys)
     # 获取文章 ID 和对应的 Redis 值（views）并组成新的字典数组
     # 构建要获取的所有文章id对应的keys
-    article_keys = [key.replace(b":weekly_hot:", b":article:") for key in weekly_hot_members]
+    article_keys = [key.replace(b":weekly_hot:", b":article:") + b":total" for key in weekly_hot_members]
+
 
     # 使用 redis_client.mget() 一次获取所有文章id对应的访问量数据
     view_counts = redis_client.mget(article_keys)
@@ -156,7 +191,7 @@ async def weekly_hot_articles(
     # 组装结果
     weekly_hot_articles = [
         {
-            "article_id": int(key.decode('utf-8').split(":")[-1]),
+            "article_id": str(key.decode('utf-8').split(":")[-1]),
             "view_count": int(view_count.decode()) if view_count else 0
         }
         for key, view_count in zip(weekly_hot_members, view_counts)
@@ -172,22 +207,42 @@ async def weekly_hot_articles(
 # 获取指定文章ID的总访问数
 @app.get("/site/{site_id}/get_article_views/")
 async def get_article_views(site_id: str = Depends(get_site_id),
-                            article_id: int = Query(..., description="文章ID")):
+                            article_id: str = Query(..., description="文章ID")):
     view_count = get_article_view_count(site_id, article_id)
-    return {"article_id": article_id, "view_count": view_count}
+    return {"view_count": view_count}
 
 
-#取网站日访问量（仅文章）
+#取站点日访问量
 @app.get("/site/{site_id}/get_site_daily_views/")
 async def get_site_daily_views(site_id: str = Depends(get_site_id),
-                            date_str: str = Query(None, description="日期，格式如2023-08-02")):
+                            date_str: str = Query(None, description="日期，格式如2023-08-02或20230802")):
     if date_str is None:
         # 如果 date_str 为空，则使用今日的日期
         today = date.today()
-        date_str = today.strftime("%Y-%m-%d")
+        date_str = today.strftime("%Y%m%d")
     view_count = get_site_daily_view_count(site_id,date_str)
     return {"site_id": site_id, "date_str":date_str, "view_count": view_count}
 
+
+#取文章排行榜
+@app.get("/site/{site_id}/top_articles/{rank_type}/")
+def get_top_articles(
+    site_id: str = Depends(get_site_id),
+    rank_type: str = Path(..., description="Type of rank to retrieve (7days, daily, monthly)"),    
+    limit: int = Query(10, description="返回文章数，默认10篇")
+):
+    if rank_type not in ['7days', 'daily', 'monthly']:
+        return {"error": "Invalid rank_type. Choose from '7days', 'daily', 'monthly'."}
+    rank_key = f'{site_id}:article:rank:{rank_type}'
+    raw_data = redis_client.zrevrange(rank_key, 0, limit-1, withscores=True)
+    
+    # 处理数据，移除 site_id 前缀并将 score 转换为整数
+    processed_data = [
+        {"article_id": item.decode().split(":")[1], "view_count": int(score)}
+        for item, score in raw_data
+    ]
+    
+    return processed_data
 
 
 @app.get("/site/{site_id}/debug/get_key/")
@@ -201,7 +256,7 @@ async def debug_get_key(
 @app.get("/site/{site_id}/debug/count_article_views/")
 async def debug_count_article_views(
         site_id: str = Depends(get_site_id),
-        article_id: int = Query(..., description="文章ID")):
+        article_id: str = Query(..., description="文章ID")):
     # 增加文章访问数量
     increment_article_view_count(site_id, article_id)
     view_count = get_article_view_count(site_id, article_id)
@@ -211,10 +266,10 @@ async def debug_count_article_views(
 @app.get("/site/{site_id}/debug/count_hot/")
 async def debug_count_article_views(
     site_id: str = Depends(get_site_id),
-    article_id: int = Query(..., description="文章ID"),
-    days: int = Query(..., description="多少天前")
+    article_id: str = Query(..., description="文章ID"),
+    days: int = Query(..., description="文章发布时间，多少天前发布")
 ):
-    publish_timestamp = int(datetime.datetime.now(
+    publish_timestamp = int(datetime.now(
     ).timestamp()) - days * ONE_DAY_IN_SECONDS  # 假设发布时间在3天前
     validation_key = generate_validation_key(
         site_id, article_id, publish_timestamp)
@@ -228,7 +283,7 @@ async def debug_count_article_views(
 def read_root():
     # 获取当前时间
 
-    current_time = datetime.datetime.now()
+    current_time = datetime.now()
     return {"app": "ArtiView", "visit_at": current_time.strftime("%Y-%m-%d %H:%M:%S")}
 
 
