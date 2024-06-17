@@ -24,11 +24,24 @@ ONE_WEEK_IN_SECONDS = 604800
 app = FastAPI()
 
 # 连接 Redis 数据库
-redis_client = redis.StrictRedis(host='redis', port=6379, db=0)
+#redis_client = redis.StrictRedis(host='redis', port=6379, db=0)
+
 
 # 加载配置文件
 with open("config.json") as f:
     config = json.load(f)
+
+# 从配置文件中获取 Redis 配置
+redis_config = config['redis']
+
+# 连接 Redis 数据库
+redis_client = redis.StrictRedis(
+    host=redis_config.get('host','redis'),
+    port=redis_config.get('port',6379),
+    password=redis_config.get('password',""),
+    ssl=redis_config.get('ssl', False),
+    db=redis_config.get('db', 0)
+)
 
 
 # 获取配置文件中的 allowed_origins

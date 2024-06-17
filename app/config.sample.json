@@ -1,5 +1,9 @@
 {
-  "allowed_site_ids": ["bka", "bkb", "inner"],
+  "allowed_site_ids": {
+    "bka": "secret1",
+    "bkb": "secret2"
+
+  },
   "allowed_origins": [
     "http://example1.com",
     "https://example2.com",
@@ -7,5 +11,9 @@
   ],
   "allow_credentials": true,
   "allow_methods": ["*"],
-  "allow_headers": ["*"]
+  "allow_headers": ["*"],
+  "redis": {
+    "host": "redis",
+    "port": 6379    
+  }
 }
