@@ -183,7 +183,15 @@ def generate_daily_rank(site_id: str, date: str):
 
     redis_client.zadd(rank_key, scores)
 
+# 使用 SCAN 命令来遍历所有匹配的键
+def scan_keys(pattern):
+    cursor = '0'
+    while cursor != 0:
+        cursor, keys = redis_client.scan(cursor=cursor, match=pattern, count=100)
+        for key in keys:
+            yield key
 
+# 更新排行榜
 def generate_rank(site_id: str, rank_key_base: str, days: int, specific_date: str = None):
     today = datetime.now()
     if specific_date:
@@ -192,7 +200,7 @@ def generate_rank(site_id: str, rank_key_base: str, days: int, specific_date: st
         day = today.strftime('%Y%m%d')
 
     keys_pattern = f'{site_id}:article:*'
-    keys = redis_client.keys(keys_pattern)
+    keys = scan_keys(keys_pattern)
 
     scores = {}
     for key in keys:
