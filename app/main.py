@@ -168,22 +168,6 @@ def add_article_to_weekly_hot(site_id, article_id, expiration_time):
     # 设置文章的过期时间
     return redis_client.expireat(weekly_hot_key, expiration_time)
 
-# 更新排行榜
-# def update_rank(site_id: str, article_id: str, rank_key: str, days: int):
-#     today = datetime.now()
-#     scores = 0
-#     for i in range(days):
-#         day = (today - timedelta(days=i)).strftime('%Y%m%d')
-#         key = f'{site_id}:article:{article_id}:{day}'
-#         score = int(redis_client.get(key) or 0)
-#         scores += score
-#     redis_client.zadd(rank_key, {f'{site_id}:{article_id}': scores})
-
-# def update_all_ranks(site_id: str, article_id: str):
-#      # 不再需要在此处更新排行榜    
-#     update_rank(site_id, article_id, f'{site_id}:article:rank:7days', 7)
-#     update_rank(site_id, article_id, f'{site_id}:article:rank:daily', 1)
-#     update_rank(site_id, article_id, f'{site_id}:article:rank:monthly', 30)
 
 # 生成指定日期的日排行榜
 def generate_daily_rank(site_id: str, date: str):
@@ -289,45 +273,6 @@ async def get_site_daily_views(site_id: str = Depends(get_site_id),
     return {"site_id": site_id, "date_str":date_str, "view_count": view_count}
 
 
-#取文章排行榜
-@app.get("/site/{site_id}/top_articles2/{rank_type}/")
-def get_top_articles2(
-    site_id: str = Depends(get_site_id),
-    rank_type: str = Path(..., description="Type of rank to retrieve (7days, daily, monthly)"),    
-    limit: int = Query(10, description="返回文章数，默认10篇"),
-    date: str = Query(None, description="Date for daily rank in YYYYMMDD format")
-
-):
-    
-    if rank_type not in ['7days', 'daily', 'monthly']:
-        raise HTTPException(status_code=400, detail="Invalid rank_type. Choose from '7days', 'daily', 'monthly'.")
-    
-    # 如果 rank_type 是 daily 并且指定了日期，则使用该日期
-    if rank_type == 'daily' and date:
-        try:
-            # 验证日期格式
-            datetime.strptime(date, '%Y%m%d')
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYYMMDD.")
-
-        rank_key = f'{site_id}:article:rank:daily:{date}'
-        
-        # 检查是否存在该日期的排行榜，如果不存在则生成
-        if not redis_client.exists(rank_key):
-            generate_daily_rank(site_id, date)
-    else:
-        rank_key = f'{site_id}:article:rank:{rank_type}'
-
-    
-    raw_data = redis_client.zrevrange(rank_key, 0, limit-1, withscores=True)
-    
-    # 处理数据，移除 site_id 前缀并将 score 转换为整数
-    processed_data = [
-        {"article_id": item.decode().split(":")[1], "view_count": int(score)}
-        for item, score in raw_data
-    ]
-    
-    return processed_data
 
 # 获取排行榜
 @app.get("/site/{site_id}/top_articles/{rank_type}/")
