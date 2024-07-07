@@ -151,7 +151,7 @@ async def count_article_views(
         background_tasks.add_task(add_article_to_weekly_hot, site_id, article_id, expiration_time)        
     
     #后台执行任务
-    background_tasks.add_task(update_all_ranks, site_id, article_id)
+    # background_tasks.add_task(update_all_ranks, site_id, article_id)
     return {"message": "文章访问数已统计"}
 
 
@@ -169,20 +169,21 @@ def add_article_to_weekly_hot(site_id, article_id, expiration_time):
     return redis_client.expireat(weekly_hot_key, expiration_time)
 
 # 更新排行榜
-def update_rank(site_id: str, article_id: str, rank_key: str, days: int):
-    today = datetime.now()
-    scores = 0
-    for i in range(days):
-        day = (today - timedelta(days=i)).strftime('%Y%m%d')
-        key = f'{site_id}:article:{article_id}:{day}'
-        score = int(redis_client.get(key) or 0)
-        scores += score
-    redis_client.zadd(rank_key, {f'{site_id}:{article_id}': scores})
+# def update_rank(site_id: str, article_id: str, rank_key: str, days: int):
+#     today = datetime.now()
+#     scores = 0
+#     for i in range(days):
+#         day = (today - timedelta(days=i)).strftime('%Y%m%d')
+#         key = f'{site_id}:article:{article_id}:{day}'
+#         score = int(redis_client.get(key) or 0)
+#         scores += score
+#     redis_client.zadd(rank_key, {f'{site_id}:{article_id}': scores})
 
-def update_all_ranks(site_id: str, article_id: str):
-    update_rank(site_id, article_id, f'{site_id}:article:rank:7days', 7)
-    update_rank(site_id, article_id, f'{site_id}:article:rank:daily', 1)
-    update_rank(site_id, article_id, f'{site_id}:article:rank:monthly', 30)
+# def update_all_ranks(site_id: str, article_id: str):
+#      # 不再需要在此处更新排行榜    
+#     update_rank(site_id, article_id, f'{site_id}:article:rank:7days', 7)
+#     update_rank(site_id, article_id, f'{site_id}:article:rank:daily', 1)
+#     update_rank(site_id, article_id, f'{site_id}:article:rank:monthly', 30)
 
 # 生成指定日期的日排行榜
 def generate_daily_rank(site_id: str, date: str):
@@ -195,6 +196,43 @@ def generate_daily_rank(site_id: str, date: str):
         article_id = key.decode().split(":")[2]
         score = int(redis_client.get(key) or 0)
         scores[f'{site_id}:{article_id}'] = score
+
+    redis_client.zadd(rank_key, scores)
+
+
+def generate_rank(site_id: str, rank_key_base: str, days: int, specific_date: str = None):
+    today = datetime.now()
+    if specific_date:
+        day = specific_date
+    else:
+        day = today.strftime('%Y%m%d')
+
+    keys_pattern = f'{site_id}:article:*'
+    keys = redis_client.keys(keys_pattern)
+
+    scores = {}
+    for key in keys:
+        article_id = key.decode().split(":")[2]
+        total_score = 0
+        for i in range(days):
+            if specific_date:
+                date_key = f'{site_id}:article:{article_id}:{day}'
+                score = int(redis_client.get(date_key) or 0)
+                total_score += score
+                break
+            else:
+                date_key = f'{site_id}:article:{article_id}:{(today - timedelta(days=i)).strftime("%Y%m%d")}'
+                score = int(redis_client.get(date_key) or 0)
+                total_score += score
+
+        # 仅在总分数大于零时添加到 scores 中
+        if total_score > 0:
+            scores[f'{site_id}:{article_id}'] = total_score
+
+    if specific_date:
+        rank_key = f'{rank_key_base}:{day}'
+    else:
+        rank_key = rank_key_base
 
     redis_client.zadd(rank_key, scores)
 
@@ -252,8 +290,8 @@ async def get_site_daily_views(site_id: str = Depends(get_site_id),
 
 
 #取文章排行榜
-@app.get("/site/{site_id}/top_articles/{rank_type}/")
-def get_top_articles(
+@app.get("/site/{site_id}/top_articles2/{rank_type}/")
+def get_top_articles2(
     site_id: str = Depends(get_site_id),
     rank_type: str = Path(..., description="Type of rank to retrieve (7days, daily, monthly)"),    
     limit: int = Query(10, description="返回文章数，默认10篇"),
@@ -290,6 +328,52 @@ def get_top_articles(
     ]
     
     return processed_data
+
+# 获取排行榜
+@app.get("/site/{site_id}/top_articles/{rank_type}/")
+def get_top_articles(
+    site_id: str = Depends(get_site_id),
+    rank_type: str = Path(..., description="Type of rank to retrieve (7days, daily, monthly)"),
+    limit: int = Query(..., description="Number of top articles to retrieve"),
+    date: str = Query(None, description="Date for daily rank in YYYYMMDD format")
+):
+    if rank_type not in ['7days', 'daily', 'monthly']:
+        raise HTTPException(status_code=400, detail="Invalid rank_type. Choose from '7days', 'daily', 'monthly'.")
+
+    # 如果 rank_type 是 daily 并且指定了日期，则使用该日期
+    if rank_type == 'daily' and date:
+        try:
+            # 验证日期格式
+            datetime.strptime(date, '%Y%m%d')
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYYMMDD.")
+
+        rank_key = f'{site_id}:article:rank:daily:{date}'
+        
+        # 检查是否存在该日期的排行榜，如果不存在则生成
+        if not redis_client.exists(rank_key):
+            generate_rank(site_id, f'{site_id}:article:rank:daily', 1, specific_date=date)
+    else:
+        if rank_type == '7days':
+            days = 7
+        elif rank_type == 'monthly':
+            days = 30
+        else:
+            days = 1
+
+        rank_key = f'{site_id}:article:rank:{rank_type}'
+        # 每次请求前重新生成排行榜
+    generate_rank(site_id, rank_key, days)
+
+    raw_data = redis_client.zrevrange(rank_key, 0, limit-1, withscores=True)
+
+    # 处理数据，移除 site_id 前缀并将 score 转换为整数，并过滤掉 score 为 0 的项目
+    processed_data = [
+        {"article_id": item.decode().split(":")[1], "view_count": int(score)}
+        for item, score in raw_data if score > 0
+    ]
+
+    return processed_data        
 
 
 
