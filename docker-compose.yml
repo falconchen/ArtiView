@@ -11,6 +11,7 @@ services:
 
   app:
     build: .
+    image: artiview-app:v2
     volumes:
       - ./app:/app
     environment:

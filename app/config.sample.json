@@ -1,4 +1,5 @@
 {
+  "default_timezone":"Asia/Shanghai",
   "allowed_site_ids": {
     "bka": "secret1",
     "bkb": "secret2"

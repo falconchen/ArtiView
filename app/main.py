@@ -14,11 +14,14 @@ from datetime import datetime,date,timedelta
 import time
 import json
 from fastapi.middleware.cors import CORSMiddleware
+import pytz
 
 
 
 ONE_DAY_IN_SECONDS = 86400
 ONE_WEEK_IN_SECONDS = 604800
+
+
 
 
 app = FastAPI()
@@ -30,6 +33,8 @@ app = FastAPI()
 # 加载配置文件
 with open("config.json") as f:
     config = json.load(f)
+
+DEFAULT_TIMEZONE = pytz.timezone(config.get("default_timezone", "Asia/Shanghai"))
 
 # 从配置文件中获取 Redis 配置
 redis_config = config['redis']
@@ -72,7 +77,7 @@ def get_site_id(site_id: str = Path(..., description="网站ID")):
 def get_current_date_str():
     # current_date = datetime.date.today()
     # return current_date.isoformat()
-    return datetime.now().strftime('%Y%m%d')
+    return datetime.now(DEFAULT_TIMEZONE).strftime('%Y%m%d')
 
 # 文章访问计数器
 def increment_article_view_count(site_id: str, article_id: str):
@@ -168,21 +173,60 @@ def add_article_to_weekly_hot(site_id, article_id, expiration_time):
     # 设置文章的过期时间
     return redis_client.expireat(weekly_hot_key, expiration_time)
 
-# 更新排行榜
-def update_rank(site_id: str, article_id: str, rank_key: str, days: int):
-    today = datetime.now()
+def calculate_expiry_time(expiry_type: str) -> int:
+    now = datetime.now(DEFAULT_TIMEZONE)
+    if expiry_type == 'daily':
+        tomorrow = now + timedelta(days=1)
+        expiry_time = datetime(tomorrow.year, tomorrow.month, tomorrow.day, 0, 0, 0, tzinfo=DEFAULT_TIMEZONE)
+    elif expiry_type == '7days':
+        days_until_next_monday = (7 - now.weekday()) % 7
+        next_monday = now + timedelta(days=days_until_next_monday)
+        expiry_time = datetime(next_monday.year, next_monday.month, next_monday.day, 0, 0, 0, tzinfo=DEFAULT_TIMEZONE)
+    elif expiry_type == 'monthly':
+        next_month = now.replace(day=28) + timedelta(days=4)
+        first_day_of_next_month = next_month.replace(day=1)
+        expiry_time = datetime(first_day_of_next_month.year, first_day_of_next_month.month, first_day_of_next_month.day, 0, 0, 0, tzinfo=DEFAULT_TIMEZONE)
+    return int(expiry_time.timestamp())
+
+def update_rank(site_id: str, article_id: str, rank_key: str, expiry_type: str):
+    today = datetime.now(DEFAULT_TIMEZONE)
     scores = 0
-    for i in range(days):
-        day = (today - timedelta(days=i)).strftime('%Y%m%d')
-        key = f'{site_id}:article:{article_id}:{day}'
-        score = int(redis_client.get(key) or 0)
-        scores += score
+    
+    if expiry_type == 'daily':
+        # 日排行榜，计算当天0时起的阅读数
+        start_day = today.replace(hour=0, minute=0, second=0, microsecond=0)
+        key = f'{site_id}:article:{article_id}:{start_day.strftime("%Y%m%d")}'
+        scores = int(redis_client.get(key) or 0)
+    
+    elif expiry_type == '7days':
+        # 周排行榜，计算从本周周一0时到当前日的阅读数
+        start_day = today - timedelta(days=today.weekday())
+        for i in range((today - start_day).days + 1):
+            day = (start_day + timedelta(days=i)).strftime('%Y%m%d')
+            key = f'{site_id}:article:{article_id}:{day}'
+            score = int(redis_client.get(key) or 0)
+            scores += score
+
+    elif expiry_type == 'monthly':
+        # 月排行榜，计算从当月1号0时到当前日的阅读数
+        start_day = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        for i in range((today - start_day).days + 1):
+            day = (start_day + timedelta(days=i)).strftime('%Y%m%d')
+            key = f'{site_id}:article:{article_id}:{day}'
+            score = int(redis_client.get(key) or 0)
+            scores += score
+
+    # 检查键是否存在，若不存在则设置过期时间
+    if not redis_client.exists(rank_key):
+        expiry_time = calculate_expiry_time(expiry_type)
+        redis_client.expireat(rank_key, expiry_time)
+
     redis_client.zadd(rank_key, {f'{site_id}:{article_id}': scores})
 
 def update_all_ranks(site_id: str, article_id: str):
-    update_rank(site_id, article_id, f'{site_id}:article:rank:7days', 7)
-    update_rank(site_id, article_id, f'{site_id}:article:rank:daily', 1)
-    update_rank(site_id, article_id, f'{site_id}:article:rank:monthly', 30)
+    update_rank(site_id, article_id, f'{site_id}:article:rank:daily', 'daily')
+    update_rank(site_id, article_id, f'{site_id}:article:rank:7days', '7days')
+    update_rank(site_id, article_id, f'{site_id}:article:rank:monthly', 'monthly')
 
 # 生成指定日期的日排行榜
 def generate_daily_rank(site_id: str, date: str):
@@ -317,7 +361,7 @@ async def debug_count_article_views(
     article_id: str = Query(..., description="文章ID"),
     days: int = Query(..., description="文章发布时间，多少天前发布")
 ):
-    publish_timestamp = int(datetime.now(
+    publish_timestamp = int(datetime.now(DEFAULT_TIMEZONE
     ).timestamp()) - days * ONE_DAY_IN_SECONDS  # 假设发布时间在3天前
     validation_key = generate_validation_key(
         site_id, article_id, publish_timestamp)
@@ -331,7 +375,7 @@ async def debug_count_article_views(
 def read_root():
     # 获取当前时间
 
-    current_time = datetime.now()
+    current_time = datetime.now(DEFAULT_TIMEZONE)
     return {"app": "ArtiView", "visit_at": current_time.strftime("%Y-%m-%d %H:%M:%S")}
 
 
