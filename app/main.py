@@ -216,12 +216,14 @@ def update_rank(site_id: str, article_id: str, rank_key: str, expiry_type: str):
             score = int(redis_client.get(key) or 0)
             scores += score
 
-    # 检查键是否存在，若不存在则设置过期时间
-    if not redis_client.exists(rank_key):
-        expiry_time = calculate_expiry_time(expiry_type)
-        redis_client.expireat(rank_key, expiry_time)
+    
 
     redis_client.zadd(rank_key, {f'{site_id}:{article_id}': scores})
+    
+    # 检查键是否设置了过期时间，若未设置则设置过期时间    
+    if redis_client.ttl(rank_key) == -1:
+        expiry_time = calculate_expiry_time(expiry_type)
+        redis_client.expireat(rank_key, expiry_time)
 
 def update_all_ranks(site_id: str, article_id: str):
     update_rank(site_id, article_id, f'{site_id}:article:rank:daily', 'daily')
