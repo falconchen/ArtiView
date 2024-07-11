@@ -178,7 +178,7 @@ def calculate_expiry_time(expiry_type: str) -> int:
     if expiry_type == 'daily':
         tomorrow = now + timedelta(days=1)
         expiry_time = datetime(tomorrow.year, tomorrow.month, tomorrow.day, 0, 0, 0, tzinfo=DEFAULT_TIMEZONE)
-    elif expiry_type == '7days':
+    elif expiry_type == 'weekly':
         days_until_next_monday = (7 - now.weekday()) % 7
         next_monday = now + timedelta(days=days_until_next_monday)
         expiry_time = datetime(next_monday.year, next_monday.month, next_monday.day, 0, 0, 0, tzinfo=DEFAULT_TIMEZONE)
@@ -198,7 +198,7 @@ def update_rank(site_id: str, article_id: str, rank_key: str, expiry_type: str):
         key = f'{site_id}:article:{article_id}:{start_day.strftime("%Y%m%d")}'
         scores = int(redis_client.get(key) or 0)
     
-    elif expiry_type == '7days':
+    elif expiry_type == 'weekly':
         # 周排行榜，计算从本周周一0时到当前日的阅读数
         start_day = today - timedelta(days=today.weekday())
         for i in range((today - start_day).days + 1):
@@ -219,7 +219,7 @@ def update_rank(site_id: str, article_id: str, rank_key: str, expiry_type: str):
     
 
     redis_client.zadd(rank_key, {f'{site_id}:{article_id}': scores})
-    
+
     # 检查键是否设置了过期时间，若未设置则设置过期时间    
     if redis_client.ttl(rank_key) == -1:
         expiry_time = calculate_expiry_time(expiry_type)
@@ -227,7 +227,7 @@ def update_rank(site_id: str, article_id: str, rank_key: str, expiry_type: str):
 
 def update_all_ranks(site_id: str, article_id: str):
     update_rank(site_id, article_id, f'{site_id}:article:rank:daily', 'daily')
-    update_rank(site_id, article_id, f'{site_id}:article:rank:7days', '7days')
+    update_rank(site_id, article_id, f'{site_id}:article:rank:weekly', 'weekly')
     update_rank(site_id, article_id, f'{site_id}:article:rank:monthly', 'monthly')
 
 # 生成指定日期的日排行榜
@@ -301,14 +301,14 @@ async def get_site_daily_views(site_id: str = Depends(get_site_id),
 @app.get("/site/{site_id}/top_articles/{rank_type}/")
 def get_top_articles(
     site_id: str = Depends(get_site_id),
-    rank_type: str = Path(..., description="Type of rank to retrieve (7days, daily, monthly)"),    
+    rank_type: str = Path(..., description="Type of rank to retrieve (weekly, daily, monthly)"),    
     limit: int = Query(10, description="返回文章数，默认10篇"),
     date: str = Query(None, description="Date for daily rank in YYYYMMDD format")
 
 ):
     
-    if rank_type not in ['7days', 'daily', 'monthly']:
-        raise HTTPException(status_code=400, detail="Invalid rank_type. Choose from '7days', 'daily', 'monthly'.")
+    if rank_type not in ['weekly', 'daily', 'monthly']:
+        raise HTTPException(status_code=400, detail="Invalid rank_type. Choose from 'weekly', 'daily', 'monthly'.")
     
     # 如果 rank_type 是 daily 并且指定了日期，则使用该日期
     if rank_type == 'daily' and date:
