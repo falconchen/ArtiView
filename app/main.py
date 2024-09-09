@@ -179,7 +179,7 @@ def calculate_expiry_time(expiry_type: str) -> int:
         tomorrow = now + timedelta(days=1)
         expiry_time = datetime(tomorrow.year, tomorrow.month, tomorrow.day, 0, 0, 0, tzinfo=DEFAULT_TIMEZONE)
     elif expiry_type == 'weekly':
-        days_until_next_monday = (7 - now.weekday()) % 7
+        days_until_next_monday = 7 if now.weekday() == 0 else (7 - now.weekday()) % 7
         next_monday = now + timedelta(days=days_until_next_monday)
         expiry_time = datetime(next_monday.year, next_monday.month, next_monday.day, 0, 0, 0, tzinfo=DEFAULT_TIMEZONE)
     elif expiry_type == 'monthly':
