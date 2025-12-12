@@ -23,3 +23,5 @@ coverage.xml
 .pytest_cache
 .hypothesis
 .idea
+migrate/
+migrate-config.sh
